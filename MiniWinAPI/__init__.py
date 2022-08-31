@@ -23,3 +23,5 @@ from .windows import (
     get_active_window_title,
     get_active_window_rect
 )
+
+from .notifs import WindowsNotif
