@@ -488,3 +488,40 @@ class WindowsNotif():
         if self._nid:
             shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(self._nid))
             user32.UpdateWindow(self._hwnd)
+
+class WindowsNotifManager():
+    """
+    Notification manager
+    """
+    def __init__(self, app_name: str, icon_path: Optional[str]):
+        """
+        Constructor
+
+        IN:
+            app_name - the app name shared by the notifs
+            icon_path - the path to the icon shared by the notifs
+        """
+        self._app_name = app_name
+        self._icon_path = icon_path
+
+    def spawn(self, title: str, body: str) -> WindowsNotif:
+        """
+        Spawns a notif, but doesn't send it
+
+        IN:
+            title - the title of the notification
+            body - the body of the notification
+        """
+        return WindowsNotif(self._app_name, self._icon_path, title, body)
+
+    def send(self, title: str, body: str) -> WindowsNotif:
+        """
+        Spawns and sends a notif
+
+        IN:
+            title - the title of the notification
+            body - the body of the notification
+        """
+        notif = self.spawn(title, body)
+        notif.send()
+        return notif
