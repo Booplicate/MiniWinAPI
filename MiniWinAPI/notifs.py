@@ -1,9 +1,9 @@
 import ctypes
 import ctypes.wintypes as wt
-
+from collections import deque
 from typing import Optional
 
-from .common import WinAPIError, _get_last_err, _reset_last_err
+from .common import WinAPIError, MiniWinAPIError, _get_last_err
 
 
 user32 = ctypes.windll.user32
@@ -18,6 +18,8 @@ CW_USEDEFAULT = -2147483648
 WM_USER = 0x0400
 HWND_MESSAGE = -3
 APP_ID = 922
+
+NOTIFS_LIMIT = 100
 
 
 class NotifyIconDataW(ctypes.Structure):
@@ -268,10 +270,22 @@ shell32.Shell_NotifyIconW.argtypes = (wt.DWORD, ctypes.POINTER(NotifyIconDataW))
 shell32.Shell_NotifyIconW.restype = wt.BOOL
 
 
+class MaxNotifsReachedError(MiniWinAPIError):
+    """
+    An error raisedwhen spawned too many WindowsNotif
+    """
+    def __str__(self) -> str:
+        return "too many notification"
+
 class WindowsNotif():
     """
     Class reprensets a windows notification
     """
+    _NOTIF_ID_POOL = deque(
+        map(str, range(NOTIFS_LIMIT)),
+        maxlen=NOTIFS_LIMIT
+    )
+
     def __init__(
         self,
         app_name: str,
@@ -288,11 +302,25 @@ class WindowsNotif():
             title - the notif title
             body - the notif body
         """
+        # Predefine in case we crash
+        self._hinstance = None
+        self._win_cls = None
+        self._cls_atom = None
+        self._hicon = None
+        self._hwnd = None
+        self._nid = None
+        self._notif_id = None
+
+        if not self._NOTIF_ID_POOL:
+            raise MaxNotifsReachedError()
+
         self._app_name = app_name
         self._icon_path = icon_path
         self._title = title
         self._body = body
+
         self._used = False
+        self._notif_id = self._NOTIF_ID_POOL.popleft()
 
         self._after_init()
 
@@ -302,12 +330,17 @@ class WindowsNotif():
         self._load_icon()
         self._create_win()
 
-    def __del__(self):
+    def _deinit(self):
         self._hide_notif()
         self._destroy_win()
         self._unload_icon()
         self._unregister_win_cls()
-        self._used = False
+
+    def __del__(self):
+        self._deinit()
+        if self._notif_id is not None:
+            self._NOTIF_ID_POOL.append(self._notif_id)
+            self._notif_id = None
 
     def __call__(self):
         if not self._used:
@@ -324,8 +357,9 @@ class WindowsNotif():
         """
         Resets this notifs allowing it to be send again
         """
-        self.__del__()
+        self._deinit()
         self._after_init()
+        self._used = False
 
     def _load_icon(self):
         """
@@ -351,7 +385,8 @@ class WindowsNotif():
         """
         Unloads the notification icon
         """
-        user32.DestroyIcon(self._hicon)
+        if self._hicon:
+            user32.DestroyIcon(self._hicon)
 
     def _set_hinstance(self):
         """
@@ -365,11 +400,7 @@ class WindowsNotif():
         """
         Registers a window class
         """
-        import random, string
-
         def winproc(hwnd: wt.HWND, msg: wt.UINT, wparam: wt.WPARAM, lparam: wt.LPARAM) -> LRESULT:
-            print("in winproc")
-            # return hwnd
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._win_cls = win_cls = WndClassExw()
@@ -382,7 +413,7 @@ class WindowsNotif():
         win_cls.hIcon = 0
         win_cls.hCursor = 0
         win_cls.hbrBackground = 0
-        win_cls.lpszClassName = self._app_name + "".join(random.choice(string.ascii_letters) for i in range(10))
+        win_cls.lpszClassName = self._app_name + self._notif_id
 
         self._cls_atom = cls_atom = user32.RegisterClassExW(ctypes.byref(win_cls))
         if not cls_atom:
@@ -392,7 +423,8 @@ class WindowsNotif():
         """
         Unregisters a window class
         """
-        user32.UnregisterClassW(self._win_cls.lpszClassName, self._hinstance)
+        if self._win_cls:
+            user32.UnregisterClassW(self._win_cls.lpszClassName, self._hinstance)
 
     def _create_win(self):
         """
@@ -424,7 +456,8 @@ class WindowsNotif():
         """
         Destroys the notification window
         """
-        user32.DestroyWindow(self._hwnd)
+        if self._hwnd:
+            user32.DestroyWindow(self._hwnd)
 
     def _display_notif(self):
         """
@@ -452,5 +485,6 @@ class WindowsNotif():
         """
         Hides this notification
         """
-        shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(self._nid))
-        user32.UpdateWindow(self._hwnd)
+        if self._nid:
+            shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(self._nid))
+            user32.UpdateWindow(self._hwnd)

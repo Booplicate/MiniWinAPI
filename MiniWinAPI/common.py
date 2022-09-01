@@ -18,7 +18,8 @@ kernel32 = ctypes.windll.kernel32
 
 HWND = int
 
-class WinAPIError(Exception):
+class MiniWinAPIError(Exception): pass
+class WinAPIError(MiniWinAPIError):
     """
     Represents an error in win API
     """
@@ -27,7 +28,7 @@ class WinAPIError(Exception):
         self.code = code
 
     def __str__(self) -> str:
-        return f"WinAPIError: {self.msg}. Status code: {self.code}"
+        return f"{self.msg}. Status code: {self.code}"
 
 
 Coord = int
