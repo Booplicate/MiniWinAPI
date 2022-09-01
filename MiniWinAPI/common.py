@@ -18,8 +18,8 @@ kernel32 = ctypes.windll.kernel32
 
 HWND = int
 
-class MiniWinAPIError(Exception): pass
-class WinAPIError(MiniWinAPIError):
+class Winnie32APIError(Exception): pass
+class WinAPIError(Winnie32APIError):
     """
     Represents an error in win API
     """

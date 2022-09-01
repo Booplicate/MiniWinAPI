@@ -3,7 +3,7 @@ import ctypes.wintypes as wt
 from collections import deque
 from typing import Optional
 
-from .common import WinAPIError, MiniWinAPIError, _get_last_err
+from .common import WinAPIError, Winnie32APIError, _get_last_err
 
 
 user32 = ctypes.windll.user32
@@ -270,7 +270,7 @@ shell32.Shell_NotifyIconW.argtypes = (wt.DWORD, ctypes.POINTER(NotifyIconDataW))
 shell32.Shell_NotifyIconW.restype = wt.BOOL
 
 
-class MaxNotifsReachedError(MiniWinAPIError):
+class MaxNotifsReachedError(Winnie32APIError):
     """
     An error raisedwhen spawned too many WindowsNotif
     """
