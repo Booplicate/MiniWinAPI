@@ -1,10 +1,5 @@
 import ctypes
-from ctypes.wintypes import (
-    BOOL as C_BOOL,
-    HWND as C_HWND,
-    LPARAM,
-    RECT
-)
+import ctypes.wintypes as wt
 
 from typing import (
     Optional
@@ -21,6 +16,29 @@ from .common import (
 
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+
+WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+
+
+user32.IsWindowVisible.argtypes = (wt.HWND,)
+user32.IsWindowVisible.restype = wt.BOOL
+
+user32.GetWindowTextLengthW.argtypes = (wt.HWND,)
+user32.GetWindowTextLengthW.restype = wt.INT
+
+user32.GetWindowTextW.argtypes = (wt.HWND, wt.LPWSTR, wt.INT)
+user32.GetWindowTextW.restype = wt.INT
+
+user32.EnumWindows.argtypes = (WNDENUMPROC, wt.LPARAM)
+user32.EnumWindows.restype = wt.BOOL
+
+user32.GetWindowRect.argtypes = (wt.HWND, wt.LPRECT)
+user32.GetWindowRect.restype = wt.BOOL
+
+user32.GetForegroundWindow.argtypes = ()
+user32.GetForegroundWindow.restype = wt.HWND
 
 
 def get_hwnd_by_title(title: str) -> Optional[HWND]:
@@ -29,25 +47,18 @@ def get_hwnd_by_title(title: str) -> Optional[HWND]:
     """
     pack = Pack(None)
 
-    @ctypes.WINFUNCTYPE(C_BOOL, C_HWND, LPARAM)
     def callback(hwnd: int, lparam: int) -> bool:
-        c_hwnd = ctypes.c_int(hwnd)
+        c_hwnd = wt.HWND(hwnd)
 
-        if user32.IsWindowVisible(c_hwnd) and user32.IsWindow(c_hwnd):
-            title_len = user32.GetWindowTextLengthW(c_hwnd)
-            buffer = ctypes.create_unicode_buffer(title_len + 1)
-            user32.GetWindowTextW(
-                c_hwnd,
-                buffer,
-                title_len + 1
-            )
-            if title == buffer.value:
+        if user32.IsWindowVisible(c_hwnd):
+            rv = get_window_title(hwnd)
+            if title == rv:
                 pack.value = hwnd
                 return False
 
         return True
 
-    user32.EnumWindows(callback, LPARAM(0))
+    user32.EnumWindows(WNDENUMPROC(callback), wt.LPARAM(0))
     return pack.value
 
 def get_window_title(hwnd: HWND) -> str:
@@ -79,7 +90,7 @@ def get_window_rect(hwnd: HWND) -> Rect:
     """
     Returns a window rect
     """
-    c_rect = RECT()
+    c_rect = wt.RECT()
     result = user32.GetWindowRect(hwnd, ctypes.byref(c_rect))
     if not result:
         raise WinAPIError("failed to get window rect", _get_last_err())
