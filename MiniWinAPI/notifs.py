@@ -1,22 +1,9 @@
 import ctypes
-from ctypes.wintypes import (
-    HWND,
-    INT,
-    UINT,
-    DWORD,
-    HICON,
-    WCHAR,
-    HANDLE,
-    WPARAM,
-    LPARAM,
-    HINSTANCE,
-    HBRUSH,
-    # LPCSTR,
-    LPCWSTR
-)
+import ctypes.wintypes as wt
+
 from typing import Optional
 
-from .common import WinAPIError, _get_last_err
+from .common import WinAPIError, _get_last_err, _reset_last_err
 
 
 user32 = ctypes.windll.user32
@@ -24,34 +11,35 @@ kernel32 = ctypes.windll.kernel32
 shell32 = ctypes.windll.shell32
 
 
-LRESULT = LPARAM#ctypes.c_long
-WNDPROC = ctypes.WINFUNCTYPE(LRESULT, HWND, UINT, WPARAM, LPARAM)
+LRESULT = wt.LPARAM#ctypes.c_long
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
 
 CW_USEDEFAULT = -2147483648
 WM_USER = 0x0400
 HWND_MESSAGE = -3
 APP_ID = 922
 
+
 class NotifyIconDataW(ctypes.Structure):
     """
     Docs: https://docs.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-notifyicondataw#syntax
     """
     _fields_ = [
-        ("cbSize", DWORD),
-        ("hWnd", HWND),
-        ("uID", UINT),
-        ("uFlags", UINT),
-        ("uCallbackMessage", UINT),
-        ("hIcon", HICON),
-        ("szTip", WCHAR * 128),
-        ("dwState", DWORD),
-        ("dwStateMask", DWORD),
-        ("szInfo", WCHAR * 256),
-        ("uVersion", UINT),
-        ("szInfoTitle", WCHAR * 64),
-        ("dwInfoFlags", DWORD),
+        ("cbSize", wt.DWORD),
+        ("hWnd", wt.HWND),
+        ("uID", wt.UINT),
+        ("uFlags", wt.UINT),
+        ("uCallbackMessage", wt.UINT),
+        ("hIcon", wt.HICON),
+        ("szTip", wt.WCHAR * 128),
+        ("dwState", wt.DWORD),
+        ("dwStateMask", wt.DWORD),
+        ("szInfo", wt.WCHAR * 256),
+        ("uVersion", wt.UINT),
+        ("szInfoTitle", wt.WCHAR * 64),
+        ("dwInfoFlags", wt.DWORD),
         ("guidItem", ctypes.c_char * 16),
-        ("hBalloonIcon", HICON)
+        ("hBalloonIcon", wt.HICON)
     ]
 
 class WndClassExw(ctypes.Structure):
@@ -59,18 +47,18 @@ class WndClassExw(ctypes.Structure):
     Docs: https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-wndclassexw#syntax
     """
     _fields_ = [
-        ("cbSize", UINT),
-        ("style", UINT),
+        ("cbSize", wt.UINT),
+        ("style", wt.UINT),
         ("lpfnWndProc", WNDPROC),
-        ("cbClsExtra", INT),
-        ("cbWndExtra", INT),
-        ("hInstance", HINSTANCE),
-        ("hIcon", HICON),
-        ("hCursor", HANDLE),
-        ("hbrBackground", HBRUSH),
-        ("lpszMenuName", LPCWSTR),
-        ("lpszClassName", LPCWSTR),
-        ("hIconSm", HICON),
+        ("cbClsExtra", wt.INT),
+        ("cbWndExtra", wt.INT),
+        ("hInstance", wt.HINSTANCE),
+        ("hIcon", wt.HICON),
+        ("hCursor", wt.HANDLE),
+        ("hbrBackground", wt.HBRUSH),
+        ("lpszMenuName", wt.LPCWSTR),
+        ("lpszClassName", wt.LPCWSTR),
+        ("hIconSm", wt.HICON),
     ]
 
 
@@ -236,9 +224,48 @@ class IMAGE():
     2. Copies a cursor.
     1. Copies an icon.
     """
-    BITMAP = UINT(0)
-    CURSOR = UINT(2)
-    ICON = UINT(1)
+    BITMAP = wt.UINT(0)
+    CURSOR = wt.UINT(2)
+    ICON = wt.UINT(1)
+
+
+user32.LoadImageW.argtypes = (
+    wt.HINSTANCE, wt.LPCWSTR, wt.UINT, wt.INT, wt.INT, wt.UINT
+)
+user32.LoadImageW.restype = wt.HANDLE
+
+user32.DestroyIcon.argtypes = (wt.HICON,)
+user32.DestroyIcon.restype = wt.BOOL
+
+kernel32.GetModuleHandleW.argtypes = (wt.LPCWSTR,)
+kernel32.GetModuleHandleW.restype = wt.HMODULE
+
+user32.DefWindowProcW.argtypes = (wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+user32.DefWindowProcW.restype = LRESULT
+
+user32.RegisterClassExW.argtypes = (ctypes.POINTER(WndClassExw),)
+user32.RegisterClassExW.restype = wt.ATOM
+
+user32.UnregisterClassW.argtypes = (wt.LPCWSTR, wt.HINSTANCE)
+user32.UnregisterClassW.restype = wt.BOOL
+
+user32.CreateWindowExW.argtypes = (
+    wt.DWORD,
+    wt.ATOM,# This could be LPCWSTR instead of ATOM, but we'd have to use cls name
+    wt.LPCWSTR, wt.DWORD,
+    wt.INT, wt.INT, wt.INT, wt.INT,
+    wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID
+)
+user32.CreateWindowExW.restype = wt.HWND
+
+user32.UpdateWindow.argtypes = (wt.HWND,)
+user32.UpdateWindow.restype = wt.BOOL
+
+user32.DestroyWindow.argtypes = (wt.HWND,)
+user32.DestroyWindow.restype = wt.BOOL
+
+shell32.Shell_NotifyIconW.argtypes = (wt.DWORD, ctypes.POINTER(NotifyIconDataW))
+shell32.Shell_NotifyIconW.restype = wt.BOOL
 
 
 class WindowsNotif():
@@ -270,7 +297,7 @@ class WindowsNotif():
         self._after_init()
 
     def _after_init(self):
-        self._set_handle()
+        self._set_hinstance()
         self._register_win_cls()
         self._load_icon()
         self._create_win()
@@ -307,7 +334,7 @@ class WindowsNotif():
         if self._icon_path:
             icon_flags = LR.LOADFROMFILE | LR.DEFAULTSIZE
             hicon = user32.LoadImageW(
-                self._handle,
+                None,# Use NULL since we're loading a "stand-alone" resource
                 self._icon_path,
                 IMAGE.ICON,
                 0,
@@ -324,13 +351,13 @@ class WindowsNotif():
         """
         Unloads the notification icon
         """
-        user32.DestroyIcon(HICON(self._hicon))
+        user32.DestroyIcon(self._hicon)
 
-    def _set_handle(self):
+    def _set_hinstance(self):
         """
         Gets the handler of this dll
         """
-        self._handle = handle = kernel32.GetModuleHandleW(None)
+        self._hinstance = handle = kernel32.GetModuleHandleW(None)
         if not handle:
             raise WinAPIError("failed to get module handle", _get_last_err())
 
@@ -338,9 +365,12 @@ class WindowsNotif():
         """
         Registers a window class
         """
-        def winproc(hwnd, msg, wparam, lparam):
+        import random, string
+
+        def winproc(hwnd: wt.HWND, msg: wt.UINT, wparam: wt.WPARAM, lparam: wt.LPARAM) -> LRESULT:
             print("in winproc")
-            return hwnd
+            # return hwnd
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._win_cls = win_cls = WndClassExw()
         win_cls.cbSize = ctypes.sizeof(win_cls)
@@ -348,11 +378,11 @@ class WindowsNotif():
         win_cls.lpfnWndProc = WNDPROC(winproc)
         win_cls.cbClsExtra = 0
         win_cls.cbWndExtra = 0
-        win_cls.hInstance = self._handle
+        win_cls.hInstance = self._hinstance
         win_cls.hIcon = 0
         win_cls.hCursor = 0
         win_cls.hbrBackground = 0
-        win_cls.lpszClassName = self._app_name
+        win_cls.lpszClassName = self._app_name + "".join(random.choice(string.ascii_letters) for i in range(10))
 
         self._cls_atom = cls_atom = user32.RegisterClassExW(ctypes.byref(win_cls))
         if not cls_atom:
@@ -362,17 +392,12 @@ class WindowsNotif():
         """
         Unregisters a window class
         """
-        user32.UnregisterClassW(self._win_cls.lpszClassName, None)
+        user32.UnregisterClassW(self._win_cls.lpszClassName, self._hinstance)
 
     def _create_win(self):
         """
         Creates a notification window
-        BUG: Curently doesn't work, hwnd will be None (NULL),
-            receiving no events, the error is 1400 that stands for
-            "invalid window handler," god knows why and where it's invalid
-            thanks microsoft
         """
-        # from .windows import get_active_window_hwnd
         win_style = WS.OVERLAPPED | WS.SYSMENU
         hwnd = user32.CreateWindowExW(
             0,
@@ -385,14 +410,13 @@ class WindowsNotif():
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            HWND_MESSAGE,
             None,
-            self._handle,
+            None,
+            self._hinstance,
             None
         )
-        # Silent the error for now
-        # if not hwnd:
-        #     raise WinAPIError("failed to create a window", _get_last_err())
+        if not hwnd:
+            raise WinAPIError("failed to create a window", _get_last_err())
         user32.UpdateWindow(hwnd)
         self._hwnd = hwnd
 
