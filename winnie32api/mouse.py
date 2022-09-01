@@ -1,5 +1,5 @@
 import ctypes
-from ctypes.wintypes import POINT
+import ctypes.wintypes as wt
 
 from .common import Point, WinAPIError, _get_last_err
 
@@ -7,11 +7,15 @@ from .common import Point, WinAPIError, _get_last_err
 user32 = ctypes.windll.user32
 
 
+user32.GetCursorPos.argtypes = (wt.LPPOINT,)
+user32.GetCursorPos.restype = wt.BOOL
+
+
 def get_screen_mouse_pos() -> Point:
     """
     Returns mouse position in screen coords
     """
-    c_point = POINT()
+    c_point = wt.POINT()
     result = user32.GetCursorPos(ctypes.byref(c_point))
     if not result:
         raise WinAPIError("failed to get mouse position", _get_last_err())
