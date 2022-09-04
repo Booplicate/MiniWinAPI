@@ -15,11 +15,15 @@ shell32 = ctypes.windll.shell32
 LRESULT = wt.LPARAM#ctypes.c_long
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
 
+
+# This has undocumented value, but seems to work
 CW_USEDEFAULT = -2147483648
 WM_USER = 0x0400
+# There's literally only one place on the internet where it says the value is -3
+# and it's not microsoft docs. At least it seems to work...
 HWND_MESSAGE = -3
-APP_ID = 922
 
+# Maximum notifs an app can spawn at once
 NOTIFS_LIMIT = 100
 
 
@@ -62,6 +66,20 @@ class WndClassExw(ctypes.Structure):
         ("lpszMenuName", wt.LPCWSTR),
         ("lpszClassName", wt.LPCWSTR),
         ("hIconSm", wt.HICON),
+    ]
+
+class Msg(ctypes.Structure):
+    """
+    Docs: https://docs.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-msg
+    """
+    _fields_ = [
+        ("hwnd", wt.HWND),
+        ("message", wt.UINT),
+        ("wParam", wt.WPARAM),
+        ("lParam", wt.LPARAM),
+        ("time", wt.DWORD),
+        ("pt", wt.POINT),
+        ("lPrivate", wt.DWORD)
     ]
 
 
@@ -391,7 +409,7 @@ class WindowsNotif():
         Loads the notification icon
         """
         if self._icon_path:
-            icon_flags = LR.LOADFROMFILE | LR.DEFAULTSIZE
+            icon_flags = LR.DEFAULTCOLOR | LR.LOADFROMFILE | LR.DEFAULTSIZE | LR.SHARED
             hicon = user32.LoadImageW(
                 None,# Use NULL since we're loading a "stand-alone" resource
                 self._icon_path,
@@ -426,6 +444,7 @@ class WindowsNotif():
         Registers a window class
         """
         def winproc(hwnd: wt.HWND, msg: wt.UINT, wparam: wt.WPARAM, lparam: wt.LPARAM) -> LRESULT:
+            print("event")
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._win_cls = win_cls = WndClassExw()
@@ -467,7 +486,7 @@ class WindowsNotif():
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            None,
+            HWND_MESSAGE,
             None,
             self._hinstance,
             None
@@ -488,15 +507,20 @@ class WindowsNotif():
         """
         Displays this notification
         """
+        id_ = int(self._notif_id)
         self._nid = nid = NotifyIconDataW()
         nid.cbSize = ctypes.sizeof(nid)
         nid.hWnd = self._hwnd
-        nid.uID = APP_ID
-        nid.uFlags = (
-            NIF.ICON | NIF.INFO | NIF.STATE | NIF.MESSAGE | NIF.TIP | NIF.SHOWTIP
-        )
-        nid.uCallbackMessage = WM_USER + 2
-        nid.hIcon = self._hicon
+        nid.uID = id_
+
+        hicon = self._hicon
+        flags = NIF.INFO | NIF.STATE | NIF.MESSAGE | NIF.TIP | NIF.SHOWTIP
+        if hicon:
+            flags |= NIF.ICON
+
+        nid.uFlags = flags
+        nid.uCallbackMessage = WM_USER + id_
+        nid.hIcon = hicon
         nid.szTip = self._app_name[:128]
         nid.szInfo = self._body[:256]
         nid.uVersion = 4
