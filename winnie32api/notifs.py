@@ -291,19 +291,19 @@ shell32.Shell_NotifyIconW.restype = wt.BOOL
 
 class MaxNotifsReachedError(Winnie32APIError):
     """
-    An error raised when spawned too many WindowsNotif
+    An error raised when spawned too many Notif
     """
     def __str__(self) -> str:
         return "too many notification"
 
 class InvalidNotifAccessError(Winnie32APIError):
     """
-    An error raised when tried to use a cleared WindowsNotif
+    An error raised when tried to use a cleared Notif
     """
     def __str__(self) -> str:
         return "can't use notification after it's been cleared"
 
-class WindowsNotif():
+class Notif():
     """
     Class reprensets a windows notification
     """
@@ -538,7 +538,7 @@ class WindowsNotif():
             shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(self._nid))
             user32.UpdateWindow(self._hwnd)
 
-class WindowsNotifManager():
+class NotifManager():
     """
     Notification manager
     """
@@ -553,9 +553,9 @@ class WindowsNotifManager():
         self._app_name = app_name
         self._icon_path = icon_path
 
-        self._notifs: deque[weakref.ReferenceType[WindowsNotif]] = deque(maxlen=NOTIFS_LIMIT)
+        self._notifs: deque[weakref.ReferenceType[Notif]] = deque(maxlen=NOTIFS_LIMIT)
 
-    def spawn(self, title: str, body: str) -> WindowsNotif:
+    def spawn(self, title: str, body: str) -> Notif:
         """
         Spawns a notif, but doesn't send it
 
@@ -563,11 +563,11 @@ class WindowsNotifManager():
             title - the title of the notification
             body - the body of the notification
         """
-        notif = WindowsNotif(self._app_name, self._icon_path, title, body)
+        notif = Notif(self._app_name, self._icon_path, title, body)
         self._notifs.append(weakref.ref(notif))
         return notif
 
-    def send(self, title: str, body: str) -> WindowsNotif:
+    def send(self, title: str, body: str) -> Notif:
         """
         Spawns and sends a notif
 
