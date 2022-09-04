@@ -418,6 +418,8 @@ class Notif():
                 0,
                 icon_flags
             )
+            if not hicon:
+                raise WinAPIError("failed to load icon", _get_last_err())
 
         else:
             hicon = 0
@@ -430,14 +432,16 @@ class Notif():
         """
         if self._hicon:
             user32.DestroyIcon(self._hicon)
+            self._hicon = None
 
     def _set_hinstance(self):
         """
         Gets the handler of this dll
         """
-        self._hinstance = handle = kernel32.GetModuleHandleW(None)
+        handle = kernel32.GetModuleHandleW(None)
         if not handle:
             raise WinAPIError("failed to get module handle", _get_last_err())
+        self._hinstance = handle
 
     def _register_win_cls(self):
         """
@@ -459,9 +463,10 @@ class Notif():
         win_cls.hbrBackground = 0
         win_cls.lpszClassName = self._app_name + self._notif_id
 
-        self._cls_atom = cls_atom = user32.RegisterClassExW(ctypes.byref(win_cls))
+        cls_atom = user32.RegisterClassExW(ctypes.byref(win_cls))
         if not cls_atom:
             raise WinAPIError("failed to create class ATOM", _get_last_err())
+        self._cls_atom = cls_atom
 
     def _unregister_win_cls(self):
         """
@@ -469,6 +474,8 @@ class Notif():
         """
         if self._win_cls:
             user32.UnregisterClassW(self._win_cls.lpszClassName, self._hinstance)
+            self._win_cls = None
+            self._cls_atom = None
 
     def _create_win(self):
         """
@@ -502,6 +509,7 @@ class Notif():
         """
         if self._hwnd:
             user32.DestroyWindow(self._hwnd)
+            self._hwnd = None
 
     def _display_notif(self):
         """
@@ -537,6 +545,7 @@ class Notif():
         if self._nid:
             shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(self._nid))
             user32.UpdateWindow(self._hwnd)
+            self._nid = None
 
 class NotifManager():
     """
