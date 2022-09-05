@@ -23,11 +23,12 @@ print(mouse)
 # Send notifications
 manager = winnie32api.NotifManager("Test Manager", "./some_icon.ico")
 manager.send("News!", "Cows can fly!")
-n1 = manager.spawn("News!", "They lie to you!")
-n1.send()
-del n1# can spawn up to 100 notifications w/o clearing them up
+manager.send("News!", "They lie to you!")
 
-n2 = winnie32api.Notif("Test app", None, "News!", "Birds are government spies!")
-n2()
-del n2# once gc runs, the resources will be freed
+# Clear notifs
+manager.clear()
+
+manager.send("News!", "Birds are government spies!")
+# Shutdown the app
+manager.shutdown()
 ```
