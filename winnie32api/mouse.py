@@ -1,3 +1,7 @@
+__all__ = (
+    "get_screen_mouse_pos",
+)
+
 import ctypes
 import ctypes.wintypes as wt
 

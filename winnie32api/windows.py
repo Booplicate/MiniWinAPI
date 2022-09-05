@@ -1,5 +1,17 @@
 # pylint: disable=attribute-defined-outside-init
 # pylint: disable=invalid-name
+
+__all__ = (
+    "get_hwnd_by_title",
+    "get_window_title",
+    "get_window_rect",
+    "flash_window",
+    "unflash_window",
+    "get_active_window_hwnd",
+    "get_active_window_title",
+    "get_active_window_rect"
+)
+
 import ctypes
 import ctypes.wintypes as wt
 
