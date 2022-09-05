@@ -1,3 +1,5 @@
+# pylint: disable=attribute-defined-outside-init
+# pylint: disable=invalid-name
 import ctypes
 import ctypes.wintypes as wt
 
@@ -6,13 +8,12 @@ from typing import (
 )
 
 from .common import (
-    # HWND,
     Rect,
     Pack,
-    WinAPIError,
     _get_last_err,
     _reset_last_err
 )
+from .errors import WinAPIError
 
 
 user32 = ctypes.windll.user32
@@ -124,7 +125,7 @@ def get_window_rect(hwnd: int) -> Rect:
     if not result:
         raise WinAPIError("failed to get window rect", _get_last_err())
 
-    return Rect.from_coords(c_rect.left, c_rect.top, c_rect.right, c_rect.bottom)
+    return Rect.from_coords(c_rect.left, c_rect.top, c_rect.right, c_rect.bottom)# type: ignore
 
 def flash_window(
     hwnd: int,
