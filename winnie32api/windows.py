@@ -1,5 +1,6 @@
 # pylint: disable=attribute-defined-outside-init
 # pylint: disable=invalid-name
+from __future__ import annotations
 
 __all__ = (
     "get_hwnd_by_title",
@@ -14,10 +15,6 @@ __all__ = (
 
 import ctypes
 import ctypes.wintypes as wt
-
-from typing import (
-    Optional
-)
 
 from .common import (
     Rect,
@@ -83,7 +80,7 @@ user32.GetForegroundWindow.argtypes = ()
 user32.GetForegroundWindow.restype = wt.HWND
 
 
-def get_hwnd_by_title(title: str) -> Optional[int]:
+def get_hwnd_by_title(title: str) -> int|None:
     """
     Returns first window hwnd with the given title
     """
@@ -141,7 +138,7 @@ def get_window_rect(hwnd: int) -> Rect:
 
 def flash_window(
     hwnd: int,
-    count: Optional[int] = 1,
+    count: int|None = 1,
     caption: bool = True,
     tray: bool = True
 ):
@@ -194,7 +191,7 @@ def unflash_window(hwnd: int):
     user32.FlashWindowEx(ctypes.byref(flash_info))
 
 
-def get_active_window_hwnd() -> Optional[int]:
+def get_active_window_hwnd() -> int|None:
     """
     Returns active window title hwnd (id)
     """
@@ -204,7 +201,7 @@ def get_active_window_hwnd() -> Optional[int]:
 
     return active_win_hwnd
 
-def get_active_window_title() -> Optional[str]:
+def get_active_window_title() -> str|None:
     """
     Returns active window title as a str
     """
@@ -214,7 +211,7 @@ def get_active_window_title() -> Optional[str]:
 
     return get_window_title(hwnd)
 
-def get_active_window_rect() -> Optional[Rect]:
+def get_active_window_rect() -> Rect|None:
     """
     Returns active window rect
     """

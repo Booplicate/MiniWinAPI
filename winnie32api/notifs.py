@@ -1,13 +1,19 @@
+# pylint: disable=attribute-defined-outside-init
+# pylint: disable=invalid-name
 from __future__ import annotations
+
+__all__ = (
+    "NotifManager",
+)
 
 import ctypes
 import ctypes.wintypes as wt
 import weakref
-# import threading
-# from collections import deque
-from typing import Optional
+import threading
+import atexit
 
-from .common import WinAPIError, Winnie32APIError, _get_last_err
+from .common import _get_last_err
+from .errors import WinAPIError, ManagerAlreadyExistsError
 
 
 user32 = ctypes.windll.user32
@@ -253,6 +259,42 @@ class IMAGE():
     CURSOR = 2
     ICON = 1
 
+# class WM():
+#     """
+#     The documentation is to scattered for these
+#     constants, so I implemented only the minimal set
+#     Docs: https://docs.microsoft.com/en-us/windows/win32/winmsg/window-notifications
+#     """
+#     CREATE = 0x0001
+#     DESTROY = 0x0002
+#     GETMINMAXINFO = 0x0024
+#     NCCALCSIZE = 0x0083
+#     NCCREATE = 0x0081
+#     NCDESTROY = 0x0082
+#     CLOSE = 0x0010
+#     QUIT = 0x0012
+
+# class PM():
+#     """
+#     NOREMOVE. Messages are not removed from the queue
+#         after processing by PeekMessage
+#     REMOVE. Messages are removed from the queue after processing
+#     NOYIELD. Prevents the system from releasing any thread that is waiting
+#         for the caller to go idle (see WaitForInputIdle).
+#         Combine this value with either PM_NOREMOVE or PM_REMOVE
+#     """
+#     NOREMOVE = 0x0000
+#     REMOVE = 0x0001
+#     NOYIELD = 0x0002
+
+
+class MsgValue():
+    """
+    A namespace for msg values constants
+    """
+    TRAY_ICON_EVENT = WM_USER + 1
+    SHUTDOWN_THREAD = WM_USER + 999
+
 
 user32.LoadImageW.argtypes = (
     wt.HINSTANCE, wt.LPCWSTR, wt.UINT, wt.INT, wt.INT, wt.UINT
@@ -292,41 +334,29 @@ user32.DestroyWindow.restype = wt.BOOL
 shell32.Shell_NotifyIconW.argtypes = (wt.DWORD, ctypes.POINTER(NotifyIconDataW))
 shell32.Shell_NotifyIconW.restype = wt.BOOL
 
+user32.GetMessageW.argtypes = (ctypes.POINTER(Msg), wt.HWND, wt.UINT, wt.UINT)
+user32.GetMessageW.restype = wt.INT
 
-class MaxNotifsReachedError(Winnie32APIError):
-    """
-    An error raised when spawned too many Notif
-    """
-    def __str__(self) -> str:
-        return "too many notification"
-
-class InvalidNotifAccessError(Winnie32APIError):
-    """
-    An error raised when tried to use a cleared Notif
-    """
-    def __str__(self) -> str:
-        return "can't use notification after it's been cleared"
-
-class ManagerAlreadyExistsError(Winnie32APIError):
-    """
-    An error raised when tried to create more than one manager
-    """
-    def __str__(self) -> str:
-        return "notification manager has already been defined for this app"
+# user32.PeekMessageW.argtypes = (ctypes.POINTER(Msg), wt.HWND, wt.UINT, wt.UINT, wt.UINT)
+# user32.PeekMessageW.restype = wt.BOOL
 
 
 class _App():
-    def __init__(self, app_name: str, icon_path: Optional[str]):
+    """
+    Private class to represent an app
+    """
+    def __init__(self, name: str, icon_path: str|None):
         """
         Constructor
 
         IN:
-            app_name - the name of the app
+            name - the name of the app
             icon_path - path to optional icon for this notif
         """
-        self._app_name = app_name
+        self._name = name
         self._icon_path = icon_path
 
+        self._thread: threading.Thread | None = None
         self._is_shown = False
 
         self._hinstance = None
@@ -335,31 +365,32 @@ class _App():
         self._hicon = None
         self._hwnd = None
 
-        self._after_init()
-
-    def _after_init(self):
+    def _init(self):
         """
-        Extra init level
+        Allocated resources for the app
         """
         self._set_hinstance()
         self._register_win_cls()
         self._load_icon()
         self._create_win()
+        self._show_tray_icon()
 
     def _deinit(self):
         """
-        Deinit method
+        Deallocated the app resources
         """
+        self._hide_tray_icon()
         self._destroy_win()
         self._unload_icon()
         self._unregister_win_cls()
         self._unset_hinstance()
-        self.hide_tray_icon()
 
     def __del__(self):
         """
         Cleanup on gc
         """
+        self.stop()
+        # Just in case
         self._deinit()
 
     def _load_icon(self):
@@ -412,7 +443,7 @@ class _App():
         Registers a window class
         """
         def winproc(hwnd: wt.HWND, msg: wt.UINT, wparam: wt.WPARAM, lparam: wt.LPARAM) -> LRESULT:
-            print(f"{hex(msg)}: {wparam} | {lparam}")
+            # print(f"{hex(msg)}: {wparam} | {lparam}")# type: ignore
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._win_cls = win_cls = WndClassExw()
@@ -425,7 +456,7 @@ class _App():
         win_cls.hIcon = 0
         win_cls.hCursor = 0
         win_cls.hbrBackground = 0
-        win_cls.lpszClassName = self._app_name
+        win_cls.lpszClassName = self._name
 
         cls_atom = user32.RegisterClassExW(ctypes.byref(win_cls))
         if not cls_atom:
@@ -450,7 +481,7 @@ class _App():
             0,
             self._cls_atom,
             # self._win_cls.lpszClassName,
-            # self._app_name,
+            # self._name,
             self._win_cls.lpszClassName,
             win_style,
             CW_USEDEFAULT,
@@ -484,9 +515,9 @@ class _App():
         nid.hWnd = self._hwnd
         nid.uID = APP_ID
         nid.uFlags = NIF.ICON | NIF.STATE | NIF.MESSAGE | NIF.TIP
-        nid.uCallbackMessage = WM_USER + 1
+        nid.uCallbackMessage = MsgValue.TRAY_ICON_EVENT
         nid.hIcon = self._hicon
-        nid.szTip = self._app_name[:128]
+        nid.szTip = self._name[:128]
         # nid.szInfo = body[:256]
         nid.uVersion = 4
         # nid.szInfoTitle = title[:64]
@@ -494,28 +525,87 @@ class _App():
 
         return nid
 
-    def show_tray_icon(self):
+    def _run_event_loop(self):
+        msg = Msg()
+        msg_p = ctypes.byref(msg)
+        hwnd = self._hwnd
+        # both 0s == no filter
+        filter_min = 0
+        filter_max = 0
+        # print("starting")
+        while (rv := user32.GetMessageW(msg_p, hwnd, filter_min, filter_max)) == 1:
+            # print("pumped")
+            if msg.message == MsgValue.SHUTDOWN_THREAD:
+                # print("shutting down")
+                break
+            user32.TranslateMessage(msg_p)
+            user32.DispatchMessageW(msg_p)
+
+        # print("exiting")
+
+        if rv == -1:
+            raise WinAPIError("GetMessageW returned an error code", _get_last_err())
+
+    def _run(self):
+        """
+        Shows the app + runs the event loop + hides the app
+        NOTE: Blocking call
+        """
+        self._init()
+        try:
+            self._run_event_loop()
+        finally:
+            self._deinit()
+
+    def start(self):
+        """
+        Runs the app
+        """
+        if not self._thread:
+            self._thread = thread = threading.Thread(target=self._run, daemon=True)
+            thread.start()
+
+    def stop(self):
+        """
+        Stops the app
+        NOTE: this will block until the app is stopped
+        """
+        if self._hwnd:
+            user32.PostMessageW(self._hwnd, MsgValue.SHUTDOWN_THREAD, 0, 0)
+            if self._thread:
+                self._thread.join()
+                self._thread = None
+
+    def _show_tray_icon(self) -> bool:
         """
         Shows tha app tray icon
         """
+        rv = False
+
         if not self._is_shown:
             nid = self._get_base_nid()
-            shell32.Shell_NotifyIconW(NIM.ADD, ctypes.byref(nid))
-            shell32.Shell_NotifyIconW(NIM.SETVERSION, ctypes.byref(nid))
+            rv = bool(shell32.Shell_NotifyIconW(NIM.ADD, ctypes.byref(nid)))
+            if rv:
+                shell32.Shell_NotifyIconW(NIM.SETVERSION, ctypes.byref(nid))
+                self._is_shown = True
 
-            self._is_shown = True
+        return rv
 
-    def hide_tray_icon(self):
+    def _hide_tray_icon(self) -> bool:
         """
         Hides tha app tray icon
         """
+        rv = False
+
         if self._is_shown:
             nid = self._get_base_nid()
-            shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(nid))
+            rv = bool(shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(nid)))
 
             self._is_shown = False
 
-    def send_notif(self, title: str, body: str):
+        return rv
+
+    def send_notif(self, title: str, body: str) -> bool:
         """
         Sends a notification
 
@@ -524,7 +614,7 @@ class _App():
             body - the body of the notification
         """
         if not self._is_shown:
-            return
+            return False
 
         nid = self._get_base_nid()
 
@@ -532,7 +622,7 @@ class _App():
         nid.szInfo = body[:256]
         nid.szInfoTitle = title[:64]
 
-        shell32.Shell_NotifyIconW(NIM.MODIFY, ctypes.byref(nid))
+        return bool(shell32.Shell_NotifyIconW(NIM.MODIFY, ctypes.byref(nid)))
 
     def clear_notifs(self):
         """
@@ -550,8 +640,8 @@ class _App():
         # shell32.Shell_NotifyIconW(NIM.MODIFY, ctypes.byref(nid))
 
         # So we're doing this hack
-        self.hide_tray_icon()
-        self.show_tray_icon()
+        self._hide_tray_icon()
+        self._show_tray_icon()
 
 
 class NotifManager():
@@ -560,7 +650,7 @@ class NotifManager():
     """
     _instance = None
 
-    def __new__(cls, *args, **kwargs) -> NotifManager:
+    def __new__(cls, *args, **kwargs) -> NotifManager:# pylint: disable=unused-argument
         """
         Singleton implementation
         """
@@ -572,7 +662,7 @@ class NotifManager():
 
         return self
 
-    def __init__(self, app_name: str, icon_path: Optional[str]):
+    def __init__(self, app_name: str, icon_path: str|None):
         """
         Constructor
 
@@ -580,33 +670,46 @@ class NotifManager():
             app_name - the app name shared by the notifs
             icon_path - the path to the icon shared by the notifs
         """
-        self._app = _App(app_name, icon_path)
-        self._app.show_tray_icon()
+        # Ask the interpreter for cleanup
+        atexit.register(self.shutdown)
+
+        self._app: _App|None = _App(app_name, icon_path)
+        self._app.start()
 
     def __del__(self):
         self.shutdown()
 
-    def send(self, title: str, body: str):
+    def send(self, title: str, body: str) -> bool:
         """
         Sends a notifification
 
         IN:
             title - the title of the notification
             body - the body of the notification
+
+        OUT:
+            boolean - success status
         """
-        self._app.send_notif(title, body)
+        if not self._app:
+            return False
+        return self._app.send_notif(title, body)
 
     def clear(self):
         """
         Clears all notification this manager has access to
-        To completely freed the resources on quit, use
+        To completely free the resources on quit, use
             the 'shutdown' method
         """
-        self._app.clear_notifs()
+        if self._app:
+            self._app.clear_notifs()
 
     def shutdown(self):
         """
         A method to call on shutdown of your app
-        Gracefully clears notifs, hides the icon, freeds the resources
+        Gracefully clears notifs, hides the icon, frees the resources
         """
-        self._app.hide_tray_icon()
+        if self._app:
+            self._app.stop()
+            # Incase you're a clever laf and run the cleanup, we can abort it
+            atexit.unregister(self.shutdown)
+            self._app = None
