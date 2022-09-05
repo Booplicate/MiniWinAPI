@@ -26,4 +26,4 @@ from .windows import (
     get_active_window_rect
 )
 
-from .notifs import NotifManager, Notif
+from .notifs import NotifManager

@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import ctypes
 import ctypes.wintypes as wt
 import weakref
-from collections import deque
+# import threading
+# from collections import deque
 from typing import Optional
 
 from .common import WinAPIError, Winnie32APIError, _get_last_err
@@ -12,20 +15,21 @@ kernel32 = ctypes.windll.kernel32
 shell32 = ctypes.windll.shell32
 
 
+APP_ID = 922
+
+
+# This is missing from wintypes
 LRESULT = wt.LPARAM#ctypes.c_long
-WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
-
-
 # This has undocumented value, but seems to work
 CW_USEDEFAULT = -2147483648
-WM_USER = 0x0400
 # There's literally only one place on the internet where it says the value is -3
 # and it's not microsoft docs. At least it seems to work...
 HWND_MESSAGE = -3
+# The base value of user-defined msgs
+WM_USER = 0x0400
 
-# Maximum notifs an app can spawn at once
-NOTIFS_LIMIT = 100
 
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
 
 class NotifyIconDataW(ctypes.Structure):
     """
@@ -245,9 +249,9 @@ class IMAGE():
     2. Copies a cursor.
     1. Copies an icon.
     """
-    BITMAP = wt.UINT(0)
-    CURSOR = wt.UINT(2)
-    ICON = wt.UINT(1)
+    BITMAP = 0
+    CURSOR = 2
+    ICON = 1
 
 
 user32.LoadImageW.argtypes = (
@@ -303,110 +307,64 @@ class InvalidNotifAccessError(Winnie32APIError):
     def __str__(self) -> str:
         return "can't use notification after it's been cleared"
 
-class Notif():
+class ManagerAlreadyExistsError(Winnie32APIError):
     """
-    Class reprensets a windows notification
+    An error raised when tried to create more than one manager
     """
-    _NOTIF_ID_POOL = deque(
-        map(str, range(NOTIFS_LIMIT)),
-        maxlen=NOTIFS_LIMIT
-    )
+    def __str__(self) -> str:
+        return "notification manager has already been defined for this app"
 
-    def __init__(
-        self,
-        app_name: str,
-        icon_path: Optional[str],
-        title: str,
-        body: str
-    ):
+
+class _App():
+    def __init__(self, app_name: str, icon_path: Optional[str]):
         """
-        Constructs a new windows notification
+        Constructor
 
         IN:
             app_name - the name of the app
             icon_path - path to optional icon for this notif
-            title - the notif title
-            body - the notif body
         """
-        # Predefine in case we crash
+        self._app_name = app_name
+        self._icon_path = icon_path
+
+        self._is_shown = False
+
         self._hinstance = None
         self._win_cls = None
         self._cls_atom = None
         self._hicon = None
         self._hwnd = None
-        self._nid = None
-        self._notif_id = None
-
-        if not self._NOTIF_ID_POOL:
-            raise MaxNotifsReachedError()
-
-        self._app_name = app_name
-        self._icon_path = icon_path
-        self._title = title
-        self._body = body
-
-        self._used = False
-        self._notif_id = self._NOTIF_ID_POOL.popleft()
 
         self._after_init()
 
     def _after_init(self):
+        """
+        Extra init level
+        """
         self._set_hinstance()
         self._register_win_cls()
         self._load_icon()
         self._create_win()
 
     def _deinit(self):
-        self._hide_notif()
+        """
+        Deinit method
+        """
         self._destroy_win()
         self._unload_icon()
         self._unregister_win_cls()
+        self._unset_hinstance()
+        self.hide_tray_icon()
 
     def __del__(self):
         """
         Cleanup on gc
         """
-        if self._notif_id is not None:
-            self._deinit()
-            self._NOTIF_ID_POOL.append(self._notif_id)
-            self._notif_id = None
-
-    def __call__(self):
-        """
-        Shortcut for the send method
-        """
-        if self._notif_id is None:
-            raise InvalidNotifAccessError()
-        if not self._used:
-            self._used = True
-            self._display_notif()
-
-    def send(self):
-        """
-        Sends this notif, once
-        """
-        self()
-
-    def reset(self):
-        """
-        Resets this notif allowing it to be send again
-        """
-        if self._notif_id is None:
-            raise InvalidNotifAccessError()
         self._deinit()
-        self._after_init()
-        self._used = False
-
-    def clear(self):
-        """
-        Clears this notif freeing the resources
-        The notif can't be used anymore after it's been cleared
-        """
-        self.__del__()
 
     def _load_icon(self):
         """
-        Loads the notification icon
+        Loads the app icon
         """
         if self._icon_path:
             icon_flags = LR.DEFAULTCOLOR | LR.LOADFROMFILE | LR.DEFAULTSIZE | LR.SHARED
@@ -422,13 +380,13 @@ class Notif():
                 raise WinAPIError("failed to load icon", _get_last_err())
 
         else:
-            hicon = 0
+            hicon = 0# TODO: doesn't work
 
         self._hicon = hicon
 
     def _unload_icon(self):
         """
-        Unloads the notification icon
+        Unloads the app icon
         """
         if self._hicon:
             user32.DestroyIcon(self._hicon)
@@ -443,12 +401,18 @@ class Notif():
             raise WinAPIError("failed to get module handle", _get_last_err())
         self._hinstance = handle
 
+    def _unset_hinstance(self):
+        """
+        Removes the pointer to the handler of this dll
+        """
+        self._hinstance = None
+
     def _register_win_cls(self):
         """
         Registers a window class
         """
         def winproc(hwnd: wt.HWND, msg: wt.UINT, wparam: wt.WPARAM, lparam: wt.LPARAM) -> LRESULT:
-            print("event")
+            print(f"{hex(msg)}: {wparam} | {lparam}")
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
         self._win_cls = win_cls = WndClassExw()
@@ -461,7 +425,7 @@ class Notif():
         win_cls.hIcon = 0
         win_cls.hCursor = 0
         win_cls.hbrBackground = 0
-        win_cls.lpszClassName = self._app_name + self._notif_id
+        win_cls.lpszClassName = self._app_name
 
         cls_atom = user32.RegisterClassExW(ctypes.byref(win_cls))
         if not cls_atom:
@@ -470,7 +434,7 @@ class Notif():
 
     def _unregister_win_cls(self):
         """
-        Unregisters a window class
+        Unregisters the window class
         """
         if self._win_cls:
             user32.UnregisterClassW(self._win_cls.lpszClassName, self._hinstance)
@@ -479,7 +443,7 @@ class Notif():
 
     def _create_win(self):
         """
-        Creates a notification window
+        Creates a tray window
         """
         win_style = WS.OVERLAPPED | WS.SYSMENU
         hwnd = user32.CreateWindowExW(
@@ -505,52 +469,109 @@ class Notif():
 
     def _destroy_win(self):
         """
-        Destroys the notification window
+        Destroys the tray window
         """
         if self._hwnd:
             user32.DestroyWindow(self._hwnd)
             self._hwnd = None
 
-    def _display_notif(self):
+    def _get_base_nid(self) -> NotifyIconDataW:
         """
-        Displays this notification
+        Constructs and returns "base" version of NotifyIconDataW
         """
-        id_ = int(self._notif_id)
-        self._nid = nid = NotifyIconDataW()
+        nid = NotifyIconDataW()
         nid.cbSize = ctypes.sizeof(nid)
         nid.hWnd = self._hwnd
-        nid.uID = id_
-
-        hicon = self._hicon
-        flags = NIF.INFO | NIF.STATE | NIF.MESSAGE | NIF.TIP | NIF.SHOWTIP
-        if hicon:
-            flags |= NIF.ICON
-
-        nid.uFlags = flags
-        nid.uCallbackMessage = WM_USER + id_
-        nid.hIcon = hicon
+        nid.uID = APP_ID
+        nid.uFlags = NIF.ICON | NIF.STATE | NIF.MESSAGE | NIF.TIP
+        nid.uCallbackMessage = WM_USER + 1
+        nid.hIcon = self._hicon
         nid.szTip = self._app_name[:128]
-        nid.szInfo = self._body[:256]
+        # nid.szInfo = body[:256]
         nid.uVersion = 4
-        nid.szInfoTitle = self._title[:64]
+        # nid.szInfoTitle = title[:64]
         nid.dwInfoFlags = NIIF.NOSOUND | NIIF.USER | NIIF.LARGE_ICON | NIIF.RESPECT_QUIET_TIME
 
-        shell32.Shell_NotifyIconW(NIM.ADD, ctypes.byref(nid))
-        shell32.Shell_NotifyIconW(NIM.SETVERSION, ctypes.byref(nid))
+        return nid
 
-    def _hide_notif(self):
+    def show_tray_icon(self):
         """
-        Hides this notification
+        Shows tha app tray icon
         """
-        if self._nid:
-            shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(self._nid))
-            user32.UpdateWindow(self._hwnd)
-            self._nid = None
+        if not self._is_shown:
+            nid = self._get_base_nid()
+            shell32.Shell_NotifyIconW(NIM.ADD, ctypes.byref(nid))
+            shell32.Shell_NotifyIconW(NIM.SETVERSION, ctypes.byref(nid))
+
+            self._is_shown = True
+
+    def hide_tray_icon(self):
+        """
+        Hides tha app tray icon
+        """
+        if self._is_shown:
+            nid = self._get_base_nid()
+            shell32.Shell_NotifyIconW(NIM.DELETE, ctypes.byref(nid))
+
+            self._is_shown = False
+
+    def send_notif(self, title: str, body: str):
+        """
+        Sends a notification
+
+        IN:
+            title - the title of the notification
+            body - the body of the notification
+        """
+        if not self._is_shown:
+            return
+
+        nid = self._get_base_nid()
+
+        nid.uFlags |= NIF.INFO | NIF.SHOWTIP
+        nid.szInfo = body[:256]
+        nid.szInfoTitle = title[:64]
+
+        shell32.Shell_NotifyIconW(NIM.MODIFY, ctypes.byref(nid))
+
+    def clear_notifs(self):
+        """
+        Clears notifications
+        """
+        if not self._is_shown:
+            return
+
+        # According to microsoft docs this should work
+        # but it works 1 out of 20 times...
+        # nid = self._get_base_nid()
+        # nid.uFlags = NIF.INFO
+        # nid.szInfo = ""
+        # nid.szInfoTitle = ""
+        # shell32.Shell_NotifyIconW(NIM.MODIFY, ctypes.byref(nid))
+
+        # So we're doing this hack
+        self.hide_tray_icon()
+        self.show_tray_icon()
+
 
 class NotifManager():
     """
     Notification manager
     """
+    _instance = None
+
+    def __new__(cls, *args, **kwargs) -> NotifManager:
+        """
+        Singleton implementation
+        """
+        if cls._instance is not None:
+            raise ManagerAlreadyExistsError()
+
+        self = super().__new__(cls)
+        cls._instance = weakref.ref(self)
+
+        return self
+
     def __init__(self, app_name: str, icon_path: Optional[str]):
         """
         Constructor
@@ -559,41 +580,33 @@ class NotifManager():
             app_name - the app name shared by the notifs
             icon_path - the path to the icon shared by the notifs
         """
-        self._app_name = app_name
-        self._icon_path = icon_path
+        self._app = _App(app_name, icon_path)
+        self._app.show_tray_icon()
 
-        self._notifs: deque[weakref.ReferenceType[Notif]] = deque(maxlen=NOTIFS_LIMIT)
+    def __del__(self):
+        self.shutdown()
 
-    def spawn(self, title: str, body: str) -> Notif:
+    def send(self, title: str, body: str):
         """
-        Spawns a notif, but doesn't send it
+        Sends a notifification
 
         IN:
             title - the title of the notification
             body - the body of the notification
         """
-        notif = Notif(self._app_name, self._icon_path, title, body)
-        self._notifs.append(weakref.ref(notif))
-        return notif
-
-    def send(self, title: str, body: str) -> Notif:
-        """
-        Spawns and sends a notif
-
-        IN:
-            title - the title of the notification
-            body - the body of the notification
-        """
-        notif = self.spawn(title, body)
-        notif.send()
-        return notif
+        self._app.send_notif(title, body)
 
     def clear(self):
         """
         Clears all notification this manager has access to
+        To completely freed the resources on quit, use
+            the 'shutdown' method
         """
-        for notif_ref in self._notifs:
-            notif = notif_ref()
-            if notif:
-                notif.clear()
-        self._notifs.clear()
+        self._app.clear_notifs()
+
+    def shutdown(self):
+        """
+        A method to call on shutdown of your app
+        Gracefully clears notifs, hides the icon, freeds the resources
+        """
+        self._app.hide_tray_icon()
