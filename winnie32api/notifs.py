@@ -11,6 +11,7 @@ import ctypes.wintypes as wt
 import weakref
 import threading
 import atexit
+from collections.abc import Callable
 
 from .common import _get_last_err
 from .errors import WinAPIError, ManagerAlreadyExistsError
@@ -31,6 +32,8 @@ CW_USEDEFAULT = -2147483648
 # There's literally only one place on the internet where it says the value is -3
 # and it's not microsoft docs. At least it seems to work...
 HWND_MESSAGE = -3
+# Undocumented, but probably is correct
+NOTIFYICON_VERSION_4 = 4
 # The base value of user-defined msgs
 WM_USER = 0x0400
 
@@ -287,13 +290,32 @@ class IMAGE():
 #     REMOVE = 0x0001
 #     NOYIELD = 0x0002
 
-
 class MsgValue():
     """
     A namespace for msg values constants
     """
     TRAY_ICON_EVENT = WM_USER + 1
     SHUTDOWN_THREAD = WM_USER + 999
+
+class LParamValue():
+    """
+    A namespace for LPARAM values constants
+    these are only some I was able to get via try and fail
+    sadly they have no documented values
+    """
+    NOTIF_SHOW = 60425218
+    NOTIF_HIDE = 60425220
+    # Not sure about this one
+    NOTIF_DISMISS = 60425221
+    HOVER = 60424704
+    LMB_PRESS = 60424705
+    # Not sure about this one
+    LMB_HOLD = 60425216
+    LMB_RELEASE = 60424706
+    RMB_PRESS = 60424708
+    # Not sure about this one
+    RMB_HOLD = 60424315
+    RMB_RELEASE = 60424709
 
 
 user32.LoadImageW.argtypes = (
@@ -340,21 +362,54 @@ user32.GetMessageW.restype = wt.INT
 # user32.PeekMessageW.argtypes = (ctypes.POINTER(Msg), wt.HWND, wt.UINT, wt.UINT, wt.UINT)
 # user32.PeekMessageW.restype = wt.BOOL
 
+user32.TranslateMessage.argtypes = (ctypes.POINTER(Msg),)
+user32.TranslateMessage.restype = wt.BOOL
+
+user32.DispatchMessageW.argtypes = (ctypes.POINTER(Msg),)
+user32.DispatchMessageW.restype = LRESULT
+
+user32.PostMessageW.argtypes = (wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+user32.PostMessageW.restype = wt.BOOL
+
+
+NotifCallback = Callable[[], None]
 
 class _App():
     """
     Private class to represent an app
     """
-    def __init__(self, name: str, icon_path: str|None):
+    def __init__(
+        self,
+        name: str,
+        icon_path: str|None,
+        on_show: NotifCallback|None,
+        on_hide: NotifCallback|None,
+        on_dismiss: NotifCallback|None,
+        on_hover: NotifCallback|None,
+        on_lmb_click: NotifCallback|None,
+        on_rmb_click: NotifCallback|None
+    ):
         """
         Constructor
 
         IN:
             name - the name of the app
             icon_path - path to optional icon for this notif
+            on_hover - on hover event callback
+            on_lmb_click - on left click event callback
+            on_rmb_click - on right click event callback
         """
         self._name = name
         self._icon_path = icon_path
+
+        self._callback_map = {
+            LParamValue.NOTIF_SHOW: on_show,
+            LParamValue.NOTIF_HIDE: on_hide,
+            LParamValue.NOTIF_DISMISS: on_dismiss,
+            LParamValue.HOVER: on_hover,
+            LParamValue.LMB_PRESS: on_lmb_click,
+            LParamValue.RMB_PRESS: on_rmb_click,
+        }
 
         self._thread: threading.Thread | None = None
         self._is_shown = False
@@ -443,6 +498,9 @@ class _App():
         Registers a window class
         """
         def winproc(hwnd: wt.HWND, msg: wt.UINT, wparam: wt.WPARAM, lparam: wt.LPARAM) -> LRESULT:
+            cb = self._callback_map.get(lparam, None)# type: ignore
+            if cb:
+                cb()
             # print(f"{hex(msg)}: {wparam} | {lparam}")# type: ignore
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -519,7 +577,7 @@ class _App():
         nid.hIcon = self._hicon
         nid.szTip = self._name[:128]
         # nid.szInfo = body[:256]
-        nid.uVersion = 4
+        nid.uVersion = NOTIFYICON_VERSION_4
         # nid.szInfoTitle = title[:64]
         nid.dwInfoFlags = NIIF.NOSOUND | NIIF.USER | NIIF.LARGE_ICON | NIIF.RESPECT_QUIET_TIME
 
@@ -533,8 +591,10 @@ class _App():
         filter_min = 0
         filter_max = 0
         # print("starting")
-        while (rv := user32.GetMessageW(msg_p, hwnd, filter_min, filter_max)) == 1:
+        while (rv := user32.GetMessageW(msg_p, hwnd, filter_min, filter_max)) != 0:
             # print("pumped")
+            if rv == -1:
+                raise WinAPIError("GetMessageW returned an error code", _get_last_err())
             if msg.message == MsgValue.SHUTDOWN_THREAD:
                 # print("shutting down")
                 break
@@ -542,9 +602,6 @@ class _App():
             user32.DispatchMessageW(msg_p)
 
         # print("exiting")
-
-        if rv == -1:
-            raise WinAPIError("GetMessageW returned an error code", _get_last_err())
 
     def _run(self):
         """
@@ -662,18 +719,51 @@ class NotifManager():
 
         return self
 
-    def __init__(self, app_name: str, icon_path: str|None):
+    def __init__(
+        self,
+        app_name: str,
+        icon_path: str|None = None,
+        on_show: NotifCallback|None = None,
+        on_hide: NotifCallback|None = None,
+        on_dismiss: NotifCallback|None = None,
+        on_hover: NotifCallback|None = None,
+        on_lmb_click: NotifCallback|None = None,
+        on_rmb_click: NotifCallback|None = None
+    ):
         """
         Constructor
 
         IN:
             app_name - the app name shared by the notifs
             icon_path - the path to the icon shared by the notifs
+            on_show - on notif show event callback
+                (Default: None)
+            on_hide - on notif hide event callback
+                (Default: None)
+            on_dismiss - on notif dismiss event callback
+                if a dismiss event has been fired, hide won't be fired
+                (Default: None)
+            on_hover - on hover event callback
+                NOTE: hover callback may run even during click events
+                (Default: None)
+            on_lmb_click - on left click event callback
+                (Default: None)
+            on_rmb_click - on right click event callback
+                (Default: None)
         """
         # Ask the interpreter for cleanup
         atexit.register(self.shutdown)
 
-        self._app: _App|None = _App(app_name, icon_path)
+        self._app: _App|None = _App(
+            app_name,
+            icon_path,
+            on_show=on_show,
+            on_hide=on_hide,
+            on_dismiss=on_dismiss,
+            on_hover=on_hover,
+            on_lmb_click=on_lmb_click,
+            on_rmb_click=on_rmb_click
+        )
         self._app.start()
 
     def __del__(self):
