@@ -520,7 +520,7 @@ class _App():
             cb = self._callback_map.get(lparam, None)# type: ignore
             if cb:
                 cb()
-                return LRESULT(1)
+                return 1# type: ignore
             # print(f"{hex(msg)}: {wparam} | {lparam}")# type: ignore
             return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
