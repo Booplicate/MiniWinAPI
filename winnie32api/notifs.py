@@ -309,10 +309,14 @@ class LParamValue():
     NOTIF_DISMISS = 60425221
     HOVER = 60424704
     LMB_PRESS = 60424705
+    LMB_DPRESS = 60424707# double press
     # Not sure about this one
     LMB_HOLD = 60425216
     LMB_RELEASE = 60424706
+    MMB_PRESS = 60424711
+    MMB_RELEASE = 60424712
     RMB_PRESS = 60424708
+    RMB_DPRESS = 60424710# double press
     # Not sure about this one
     RMB_HOLD = 60424315
     RMB_RELEASE = 60424709
@@ -387,7 +391,10 @@ class _App():
         on_dismiss: NotifCallback|None,
         on_hover: NotifCallback|None,
         on_lmb_click: NotifCallback|None,
-        on_rmb_click: NotifCallback|None
+        on_lmb_dclick: NotifCallback|None,
+        on_mmb_click: NotifCallback|None,
+        on_rmb_click: NotifCallback|None,
+        on_rmb_dclick: NotifCallback|None
     ):
         """
         Constructor
@@ -397,7 +404,10 @@ class _App():
             icon_path - path to optional icon for this notif
             on_hover - on hover event callback
             on_lmb_click - on left click event callback
+            on_lmb_dclick - on left double click event callback
+            on_mmb_click - on middle click event callback
             on_rmb_click - on right click event callback
+            on_rmb_dclick - on right double click event callback
         """
         self._name = name
         self._icon_path = icon_path
@@ -408,7 +418,10 @@ class _App():
             LParamValue.NOTIF_DISMISS: on_dismiss,
             LParamValue.HOVER: on_hover,
             LParamValue.LMB_PRESS: on_lmb_click,
+            LParamValue.LMB_DPRESS: on_lmb_dclick,
+            LParamValue.MMB_PRESS: on_mmb_click,
             LParamValue.RMB_PRESS: on_rmb_click,
+            LParamValue.RMB_DPRESS: on_rmb_dclick
         }
 
         self._thread: threading.Thread | None = None
@@ -728,7 +741,10 @@ class NotifManager():
         on_dismiss: NotifCallback|None = None,
         on_hover: NotifCallback|None = None,
         on_lmb_click: NotifCallback|None = None,
-        on_rmb_click: NotifCallback|None = None
+        on_lmb_dclick: NotifCallback|None = None,
+        on_mmb_click: NotifCallback|None = None,
+        on_rmb_click: NotifCallback|None = None,
+        on_rmb_dclick: NotifCallback|None = None
     ):
         """
         Constructor
@@ -744,11 +760,19 @@ class NotifManager():
                 if a dismiss event has been fired, hide won't be fired
                 (Default: None)
             on_hover - on hover event callback
-                NOTE: hover callback may run even during click events
+                NOTE: hover callback may run event during click events
                 (Default: None)
             on_lmb_click - on left click event callback
                 (Default: None)
+            on_lmb_dclick - on left double click event callback
+                NOTE: before a double click event, a click event will still be fired
+                (Default: None)
+            on_mmb_click - on middle click event callback
+                (Default: None)
             on_rmb_click - on right click event callback
+                (Default: None)
+            on_rmb_dclick - on right double click event callback
+                NOTE: before a double click event, a click event will still be fired
                 (Default: None)
         """
         # Ask the interpreter for cleanup
@@ -762,12 +786,21 @@ class NotifManager():
             on_dismiss=on_dismiss,
             on_hover=on_hover,
             on_lmb_click=on_lmb_click,
-            on_rmb_click=on_rmb_click
+            on_lmb_dclick=on_lmb_dclick,
+            on_mmb_click=on_mmb_click,
+            on_rmb_click=on_rmb_click,
+            on_rmb_dclick=on_rmb_dclick
         )
         self._app.start()
 
     def __del__(self):
         self.shutdown()
+
+    def is_ready(self) -> bool:
+        """
+        Checks if the manager and app are ready to send notifications
+        """
+        return self._app is not None and self._app._is_shown# pylint: disable=protected-access
 
     def send(self, title: str, body: str) -> bool:
         """
