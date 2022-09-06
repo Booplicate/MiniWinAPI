@@ -1,4 +1,4 @@
-# winnie32api - Minimalistic wrapper around Wind32 API using ctypes
+## winnie32api - Minimalistic wrapper around Win32 API using ctypes
 
 ### Requirements:
  - `Python 3.9.6`
