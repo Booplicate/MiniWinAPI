@@ -198,8 +198,13 @@ def set_active_window(hwnd: int):
             to other processes
         It's impossible to "activate" a window from another process
     """
-    user32.SetForegroundWindow(hwnd)
-    user32.SetActiveWindow(hwnd)
+    # Also tried:
+    # - linking threads, no result
+    # - emulating input, no result
+    user32.SetFocus(hwnd)# err 5
+    user32.BringWindowToTop(hwnd)# no err, but no result
+    user32.SetForegroundWindow(hwnd)# err 1400
+    # user32.SetActiveWindow(hwnd)# err 1400
 
 
 def get_active_window_hwnd() -> int|None:
